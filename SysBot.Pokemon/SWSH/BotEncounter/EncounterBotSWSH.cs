@@ -1,0 +1,399 @@
+using PKHeX.Core;
+using SysBot.Base;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using static SysBot.Base.SwitchButton;
+using static SysBot.Base.SwitchStick;
+
+namespace SysBot.Pokemon;
+
+public abstract class EncounterBotSWSH : PokeRoutineExecutor8SWSH, IEncounterBot
+{
+    protected readonly PokeTradeHub<PK8> Hub;
+    private readonly IDumper DumpSetting;
+    protected readonly EncounterSettingsSWSH Settings;
+    protected readonly WebHookHandler<PK8> WebHook;
+    public ICountSettings Counts => Settings;
+    protected PokeDetailForm PokeDetail;
+    protected LairDetailForm LairDetail;
+    protected CalyrexDetailForm CalyrexDetail;
+    protected EggDetailForm EggDetail;
+
+    protected EncounterBotSWSH(PokeBotState cfg, PokeTradeHub<PK8> hub) : base(cfg)
+    {
+        Hub = hub;
+        Settings = Hub.Config.EncounterSWSH;
+        WebHook = new WebHookHandler<PK8>(Hub, Config.NextRoutineType);
+        DumpSetting = Hub.Config.Folder;
+        PokeDetail = new();
+        LairDetail = new();
+        CalyrexDetail = new();
+        EggDetail = new();
+    }
+
+    // Cached offsets that stay the same per session.
+    protected ulong OverworldOffset;
+
+    protected int encounterCount;
+
+    public override async Task MainLoop(CancellationToken token)
+    {
+        var settings = Hub.Config.EncounterSWSH;
+        if (!SwitchConnection.Connected)
+            SwitchConnection.Reset();
+        if (SyncContextHolder.SyncContext == null)
+        {
+            MessageBox.Show("SyncContext is null!");
+            return;
+        }
+        if (Config.NextRoutineType == PokeRoutineType.MaxLair)
+        {
+            await Task.Run(() =>
+            {
+                SyncContextHolder.SyncContext.Post(_ =>
+                {
+                    if (LairDetail.IsDisposed)
+                        LairDetail = new();
+                    if (LairDetail.ControlBox)
+                        LairDetail.ControlBox = false;
+                    if (!LairDetail.Visible)
+                        LairDetail.Show();
+                    if (LairDetail.WindowState == FormWindowState.Minimized || LairDetail.WindowState == FormWindowState.Maximized)
+                        LairDetail.WindowState = FormWindowState.Normal;
+                }, null);
+            });
+        }
+        else if (Config.NextRoutineType == PokeRoutineType.CalyrexBot)
+        {
+            await Task.Run(() =>
+            {
+                SyncContextHolder.SyncContext.Post(_ =>
+                {
+                    if (CalyrexDetail.IsDisposed)
+                        CalyrexDetail = new();
+                    if (CalyrexDetail.ControlBox)
+                        CalyrexDetail.ControlBox = false;
+                    if (!CalyrexDetail.Visible)
+                        CalyrexDetail.Show();
+                    if (CalyrexDetail.WindowState == FormWindowState.Minimized || CalyrexDetail.WindowState == FormWindowState.Maximized)
+                        CalyrexDetail.WindowState = FormWindowState.Normal;
+                }, null);
+            });
+        }
+        else if (Config.NextRoutineType == PokeRoutineType.EggFetch)
+        {
+            await Task.Run(() =>
+            {
+                SyncContextHolder.SyncContext.Post(_ =>
+                {
+                    if (EggDetail.IsDisposed)
+                        EggDetail = new();
+                    if (EggDetail.ControlBox)
+                        EggDetail.ControlBox = false;
+                    if (!EggDetail.Visible)
+                        EggDetail.Show();
+                    if (EggDetail.WindowState == FormWindowState.Minimized || EggDetail.WindowState == FormWindowState.Maximized)
+                        EggDetail.WindowState = FormWindowState.Normal;
+                }, null);
+            });
+        }
+        else if (CheckBotType(Config.NextRoutineType))
+        {
+            await Task.Run(() =>
+            {
+                SyncContextHolder.SyncContext.Post(_ =>
+                {
+                    if (PokeDetail.IsDisposed)
+                        PokeDetail = new();
+                    if (PokeDetail.ControlBox)
+                        PokeDetail.ControlBox = false;
+                    if (!PokeDetail.Visible)
+                        PokeDetail.Show();
+                    if (PokeDetail.WindowState == FormWindowState.Minimized || PokeDetail.WindowState == FormWindowState.Maximized)
+                        PokeDetail.WindowState = FormWindowState.Normal;
+                }, null);
+            });
+        }
+        Log("Identifying trainer data of the host console.");
+        var sav = await IdentifyTrainer(token).ConfigureAwait(false);
+        await InitializeHardware(settings, token).ConfigureAwait(false);
+
+        OverworldOffset = await SwitchConnection.PointerAll(Offsets.OverworldPointer, token).ConfigureAwait(false);
+
+        try
+        {
+            Log($"Starting main {GetType().Name} loop.");
+            Config.IterateNextRoutine();
+
+            // Clear out any residual stick weirdness.
+            await ResetStick(token).ConfigureAwait(false);
+            await EncounterLoop(sav, token).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                if (token.IsCancellationRequested)
+                {
+                    Log("Operation is still canceled!");
+                    Log($"Ending {GetType().Name} loop.");
+                    if (SwitchConnection.Connected)
+                    {
+                        await Click(HOME, 1_000, CancellationToken.None).ConfigureAwait(false);
+                        await HardStop().ConfigureAwait(false);
+                    }
+                    if (Config.NextRoutineType == PokeRoutineType.MaxLair && !LairDetail.ControlBox)
+                        LairDetail.ControlBox = true;
+                    else if (Config.NextRoutineType == PokeRoutineType.CalyrexBot && !CalyrexDetail.ControlBox)
+                        CalyrexDetail.ControlBox = true;
+                    else if (Config.NextRoutineType == PokeRoutineType.EggFetch && !EggDetail.ControlBox)
+                        EggDetail.ControlBox = true;
+                    else if (CheckBotType(Config.NextRoutineType) && !PokeDetail.ControlBox)
+                        PokeDetail.ControlBox = true;
+                    return;
+                }
+                Log(ex.ToString());
+                Log($"Start ReConnecting..{Environment.NewLine}Current Connection State: {SwitchConnection.Connected}");
+                if (SwitchConnection.Connected)
+                    SwitchConnection.Disconnect();
+                Log($"Updated Connection State: {SwitchConnection.Connected}");
+                await Task.Delay(300_000, token).ConfigureAwait(false);
+                SwitchConnection.Reset();
+                if (!SwitchConnection.Connected)
+                    throw new Exception("SwitchConnection can't Reconnect!");
+                await ResetStick(token).ConfigureAwait(false);
+                await ReOpenGame(Hub.Config, token).ConfigureAwait(false);
+            }
+            catch (SocketException socketerr)
+            {
+                Log($"Socket Error: {socketerr.Message}");
+                Log($"Ending {GetType().Name} loop.");
+                if (SwitchConnection.Connected)
+                {
+                    await Click(HOME, 1_000, CancellationToken.None).ConfigureAwait(false);
+                    await HardStop().ConfigureAwait(false);
+                }
+                if (Config.NextRoutineType == PokeRoutineType.MaxLair && !LairDetail.ControlBox)
+                    LairDetail.ControlBox = true;
+                else if (Config.NextRoutineType == PokeRoutineType.CalyrexBot && !CalyrexDetail.ControlBox)
+                    CalyrexDetail.ControlBox = true;
+                else if (Config.NextRoutineType == PokeRoutineType.EggFetch && !EggDetail.ControlBox)
+                    EggDetail.ControlBox = true;
+                else if (CheckBotType(Config.NextRoutineType) && !PokeDetail.ControlBox)
+                    PokeDetail.ControlBox = true;
+                return;
+            }
+            catch (Exception err)
+            {
+                Log(err.Message);
+                Log($"Ending {GetType().Name} loop.");
+                if (SwitchConnection.Connected)
+                {
+                    await Click(HOME, 1_000, CancellationToken.None).ConfigureAwait(false);
+                    await HardStop().ConfigureAwait(false);
+                }
+                if (Config.NextRoutineType == PokeRoutineType.MaxLair && !LairDetail.ControlBox)
+                    LairDetail.ControlBox = true;
+                else if (Config.NextRoutineType == PokeRoutineType.CalyrexBot && !CalyrexDetail.ControlBox)
+                    CalyrexDetail.ControlBox = true;
+                else if (Config.NextRoutineType == PokeRoutineType.EggFetch && !EggDetail.ControlBox)
+                    EggDetail.ControlBox = true;
+                else if (CheckBotType(Config.NextRoutineType) && !PokeDetail.ControlBox)
+                    PokeDetail.ControlBox = true;
+                return;
+            }
+            await MainLoop(token).ConfigureAwait(false);
+            return;
+        }
+        Log($"Ending {GetType().Name} loop."); if (SwitchConnection.Connected)
+        {
+            await Click(HOME, 1_000, CancellationToken.None).ConfigureAwait(false);
+            await HardStop().ConfigureAwait(false);
+        }
+        if (Config.NextRoutineType == PokeRoutineType.MaxLair && !LairDetail.ControlBox)
+            LairDetail.ControlBox = true;
+        else if (Config.NextRoutineType == PokeRoutineType.CalyrexBot && !CalyrexDetail.ControlBox)
+            CalyrexDetail.ControlBox = true;
+        else if (Config.NextRoutineType == PokeRoutineType.EggFetch && !EggDetail.ControlBox)
+            EggDetail.ControlBox = true;
+        else if (CheckBotType(Config.NextRoutineType) && !PokeDetail.ControlBox)
+            PokeDetail.ControlBox = true;
+    }
+
+    public override async Task HardStop()
+    {
+        await ResetStick(CancellationToken.None).ConfigureAwait(false);
+        await CleanExit(CancellationToken.None).ConfigureAwait(false);
+    }
+
+    protected abstract Task EncounterLoop(SAV8SWSH sav, CancellationToken token);
+
+    // return true if breaking loop
+    protected async Task<(bool Stop, bool Success)> HandleEncounter(PK8 pk, CancellationToken token, byte[]? raw = null, bool minimize = false)
+    {
+        encounterCount++;
+        var print = Hub.Config.StopConditions.GetPrintName(pk);
+        Log($"Encounter: {encounterCount}");
+
+        if (!string.IsNullOrWhiteSpace(print))
+            Log($"{print}{Environment.NewLine}", !minimize);
+
+        var folder = IncrementAndGetDumpFolder(pk);
+
+        if (pk.Valid)
+        {
+            switch (DumpSetting)
+            {
+                case { Dump: true, DumpShinyOnly: true } when pk.IsShiny:
+                case { Dump: true, DumpShinyOnly: false }:
+                    DumpPokemon(DumpSetting.DumpFolder, folder, pk);
+                    break;
+            }
+
+            if (raw != null)
+            {
+                switch (DumpSetting)
+                {
+                    case { DumpRaw: true, DumpShinyOnly: true } when pk.IsShiny:
+                    case { DumpRaw: true, DumpShinyOnly: false }:
+                        DumpPokemon(DumpSetting.DumpFolder, folder, pk, raw);
+                        break;
+                }
+            }
+        }
+
+        if (!StopConditionSettings.EncounterFound(pk, Hub.Config.StopConditions))
+        {
+            if (folder.Equals("egg") && Hub.Config.StopConditions.SearchConditions.Any(sc => sc.IsEnabled && pk.IsShiny && sc.ShinyTarget is TargetShinyType.AnyShiny or TargetShinyType.StarOnly or TargetShinyType.SquareOnly))
+                Hub.LogEmbed(pk, false);
+
+            return (false, false);
+        }
+
+        if (Hub.Config.StopConditions.CaptureVideoClip)
+        {
+            await Task.Delay(Hub.Config.StopConditions.ExtraTimeWaitCaptureVideo, token).ConfigureAwait(false);
+            await PressAndHold(CAPTURE, 2_000, 0, token).ConfigureAwait(false);
+        }
+
+        var mode = Settings.ContinueAfterMatch;
+        var msg = $"Result found!\n{print}\n" + mode switch
+        {
+            ContinueAfterMatch.Continue             => "Continuing...",
+            ContinueAfterMatch.PauseWaitAcknowledge => "Waiting for instructions to continue.",
+            ContinueAfterMatch.StopExit             => "Stopping routine execution; restart the bot to search again.",
+            _ => throw new ArgumentOutOfRangeException(nameof(ContinueAfterMatch), "Match result type was invalid.")
+        };
+
+        if (!string.IsNullOrWhiteSpace(Hub.Config.StopConditions.MatchFoundEchoMention))
+            msg = $"{Hub.Config.StopConditions.MatchFoundEchoMention} {msg}";
+        EchoUtil.Echo(msg);
+        Hub.LogEmbed(pk, true);
+
+        if (mode == ContinueAfterMatch.StopExit)
+            return (true, true);
+        if (mode == ContinueAfterMatch.Continue)
+            return (false, true);
+
+        IsWaiting = true;
+        while (IsWaiting)
+            await Task.Delay(1_000, token).ConfigureAwait(false);
+        return (false, true);
+    }
+
+    private string IncrementAndGetDumpFolder(PKM pk)
+    {
+        try
+        {
+            var loggingFolder = string.IsNullOrWhiteSpace(Hub.Config.LoggingFolder)
+                ? string.Empty
+                : Hub.Config.LoggingFolder;
+
+            var legendary = SpeciesCategory.IsLegendary(pk.Species) || SpeciesCategory.IsMythical(pk.Species) || SpeciesCategory.IsSubLegendary(pk.Species);
+            if (legendary)
+            {
+                Settings.AddCompletedLegends();
+                OutputExtensions<PK8>.EncounterLogs(pk, Path.Combine(loggingFolder, "EncounterLogPretty_LegendSWSH.txt"));
+                return "legends";
+            }
+
+            if (pk.IsEgg)
+            {
+                Settings.AddCompletedEggs();
+                OutputExtensions<PK8>.EncounterLogs(pk, Path.Combine(loggingFolder, "EncounterLogPretty_EggSWSH.txt"));
+                return "egg";
+            }
+            if (pk.Species is >= (int)Species.Dracozolt and <= (int)Species.Arctovish)
+            {
+                Settings.AddCompletedFossils();
+                OutputExtensions<PK8>.EncounterLogs(pk, Path.Combine(loggingFolder, "EncounterLogPretty_FosilSWSH.txt"));
+                return "fossil";
+            }
+
+            Settings.AddCompletedEncounters();
+            OutputExtensions<PK8>.EncounterLogs(pk, Path.Combine(loggingFolder, "EncounterLogPretty_EncounterSWSH.txt"));
+            return "encounters";
+        }
+        catch (Exception e)
+        {
+            Log($"Couldn't update encounters:\n{e.Message}\n{e.StackTrace}");
+            return "random";
+        }
+    }
+
+    private bool IsWaiting;
+    public void Acknowledge() => IsWaiting = false;
+
+    protected async Task ResetStick(CancellationToken token)
+    {
+        // If aborting the sequence, we might have the stick set at some position. Clear it just in case.
+        await SetStick(LEFT, 0, 0, 0_500, token).ConfigureAwait(false); // reset
+    }
+
+    protected async Task FleeToOverworld(CancellationToken token)
+    {
+        // This routine will always escape a battle.
+        await Click(DUP, 0_200, token).ConfigureAwait(false);
+        await Click(A, 1_000, token).ConfigureAwait(false);
+
+        while (await IsInBattle(token).ConfigureAwait(false))
+        {
+            await Click(B, 0_500, token).ConfigureAwait(false);
+            await Click(B, 1_000, token).ConfigureAwait(false);
+            await Click(DUP, 0_200, token).ConfigureAwait(false);
+            await Click(A, 1_000, token).ConfigureAwait(false);
+        }
+    }
+
+    protected async Task EnableAlwaysCatch(CancellationToken token)
+    {
+        if (!Hub.Config.EncounterSWSH.EnableCatchCheat)
+            return;
+
+        Log("Enable critical capture cheat", false);
+        // Source: https://gbatemp.net/threads/pokemon-sword-shield-v1-3-1-cfw-emu-cheat-codes.579372/post-9782611
+
+        // Original cheat:
+        /*
+         * [08# Catch Rate set to 100% Capture]
+         * 04000000 0077F6E8 529FFFE0
+         */
+
+        await SwitchConnection.WriteBytesMainAsync(BitConverter.GetBytes(0x529FFFE0), 0x0077F6E8, token);
+    }
+    private bool CheckBotType(PokeRoutineType type) => type switch
+    {
+        PokeRoutineType.Reset => true,
+        PokeRoutineType.FossilBot => true,
+        PokeRoutineType.DogBot => true,
+        PokeRoutineType.CurryBot => true,
+        PokeRoutineType.SoJCamp => true,
+        _ => false
+    };
+}

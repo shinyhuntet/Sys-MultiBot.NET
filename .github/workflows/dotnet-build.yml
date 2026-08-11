@@ -1,0 +1,81 @@
+name: .NET Core Desktop
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+    tags-ignore: [ "**" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Install .NET Core
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: 9.0.x
+
+    - name: Restore packages
+      run: dotnet restore
+
+    - name: Run UnitTests
+      run: dotnet test
+
+    # Get current date for release naming
+    - name: Get current date
+      id: date
+      run: echo "DATE=$(date +'%y.%m.%d')" >> $ENV:GITHUB_OUTPUT
+
+    # Build applications
+    - name: Build WinForms - Windows x64
+      uses: ./.github/actions/sysbot-build
+      with:
+        dotnet: 'net9.0-windows'
+        platform: 'win-x64'
+        project: 'SysBot.Pokemon.WinForms'
+        artifact: 'winforms-windows-x64'
+        version: '${{ steps.date.outputs.DATE }}.${{ github.run_number }}'
+
+    - name: Build ConsoleApp - Linux arm64
+      uses: ./.github/actions/sysbot-build
+      with:
+        dotnet: 'net9.0'
+        platform: 'linux-arm64'
+        project: 'SysBot.Pokemon.ConsoleApp'
+        artifact: 'consoleapp-linux-arm64'
+        version: '${{ steps.date.outputs.DATE }}.${{ github.run_number }}'
+        sc: true
+
+    # Create pre-release
+    - name: Pre-Release 
+      uses: softprops/action-gh-release@v1
+      if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/develop' }}
+      with:
+        tag_name: ${{ steps.date.outputs.DATE }}.${{ github.run_number }}
+        prerelease: true
+        body: Pre-release, compare Git commits.
+        files: |
+          winforms-windows-x64.zip
+          consoleapp-linux-arm64.zip
+
+    # Create release
+    - name: Release 
+      uses: softprops/action-gh-release@v1
+      if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+      with:
+        tag_name: ${{ steps.date.outputs.DATE }}.${{ github.run_number }}
+        prerelease: false
+        body: Release, compare Git commits.
+        files: |
+          winforms-windows-x64.zip
+          consoleapp-linux-arm64.zip

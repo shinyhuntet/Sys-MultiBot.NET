@@ -1,0 +1,66 @@
+using PKHeX.Core;
+using System;
+
+namespace SysBot.Pokemon;
+
+public sealed class BotFactory8SWSH : BotFactory<PK8>
+{
+    public override PokeRoutineExecutorBase CreateBot(PokeTradeHub<PK8> Hub, PokeBotState cfg) => cfg.NextRoutineType switch
+    {
+        PokeRoutineType.FlexTrade or PokeRoutineType.Idle
+            or PokeRoutineType.SurpriseTrade
+            or PokeRoutineType.LinkTrade
+            or PokeRoutineType.Clone
+            or PokeRoutineType.Dump
+            or PokeRoutineType.SeedCheck
+            => new PokeTradeBotSWSH(Hub, cfg),
+
+        PokeRoutineType.RaidBot => new RaidBotSWSH(cfg, Hub),
+        PokeRoutineType.MaxLair => new LairBotSWSH(cfg, Hub),
+        PokeRoutineType.EncounterLine => new EncounterBotLineSWSH(cfg, Hub),
+        PokeRoutineType.EggFetch => new EncounterBotEggSWSH(cfg, Hub),
+        PokeRoutineType.FossilBot => new EncounterBotFossilSWSH(cfg, Hub),
+        PokeRoutineType.Reset => new EncounterBotResetSWSH(cfg, Hub),
+        PokeRoutineType.DogBot => new EncounterBotDogSWSH(cfg, Hub),
+        PokeRoutineType.CalyrexBot => new EncounterBotCalyrexSWSH(cfg, Hub),
+        PokeRoutineType.BoolBot => new BoolBotSWSH(cfg, Hub),
+        PokeRoutineType.SoJCamp => new SoJCampSWSH(cfg, Hub),
+        PokeRoutineType.CurryBot => new CurryBotSWSH(cfg, Hub),
+        PokeRoutineType.DenBot => new EncounterBotDenSWSH(cfg, Hub),
+
+        PokeRoutineType.RemoteControl => new RemoteControlBotSWSH(cfg),
+
+        PokeRoutineType.OverworldBot => new OverworldBotSWSH(cfg, Hub),
+        _ => throw new ArgumentException(nameof(cfg.NextRoutineType)),
+    };
+
+    public override bool SupportsRoutine(PokeRoutineType type) => type switch
+    {
+        PokeRoutineType.FlexTrade or PokeRoutineType.Idle
+            or PokeRoutineType.SurpriseTrade
+            or PokeRoutineType.LinkTrade
+            or PokeRoutineType.Clone
+            or PokeRoutineType.Dump
+            or PokeRoutineType.SeedCheck
+            => true,
+
+        PokeRoutineType.RaidBot => true,
+        PokeRoutineType.MaxLair => true,
+        PokeRoutineType.EncounterLine => true,
+        PokeRoutineType.EggFetch => true,
+        PokeRoutineType.FossilBot => true,
+        PokeRoutineType.Reset => true,
+        PokeRoutineType.DogBot => true,
+        PokeRoutineType.CalyrexBot => true,
+        PokeRoutineType.BoolBot => true,
+        PokeRoutineType.SoJCamp => true,
+        PokeRoutineType.CurryBot => true,
+        PokeRoutineType.DenBot => true,
+
+        PokeRoutineType.RemoteControl => true,
+
+        PokeRoutineType.OverworldBot => true,
+
+        _ => false,
+    };
+}

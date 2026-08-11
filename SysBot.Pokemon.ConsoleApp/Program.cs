@@ -1,0 +1,150 @@
+using PKHeX.Core;
+using SysBot.Base;
+using SysBot.Pokemon.Z3;
+using System;
+using System.IO;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using SysBot.Pokemon.ZA;
+
+namespace SysBot.Pokemon.ConsoleApp;
+
+public static class Program
+{
+    private const string ConfigPath = "config.json";
+
+    private static void Main(string[] args)
+    {
+        var build = string.Empty;
+#if DEBUG
+        var date = File.GetLastWriteTime(System.Reflection.Assembly.GetEntryAssembly()!.Location);
+        build = $" (dev-{date:yyyyMMdd})";
+#endif
+        var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version!;
+
+        Console.WriteLine($"SysBot v{v}{build}");
+        Console.WriteLine("Starting up...");
+        if (args.Length > 1)
+            Console.WriteLine("This program does not support command line arguments.");
+
+        if (!File.Exists(ConfigPath))
+        {
+            ExitNoConfig();
+            return;
+        }
+
+        try
+        {
+            var lines = File.ReadAllText(ConfigPath);
+            var config = JsonSerializer.Deserialize(lines, ProgramConfigContext.Default.ProgramConfig) ?? new ProgramConfig();
+            LogConfig.MaxArchiveFiles = config.Hub.MaxArchiveFiles;
+            LogConfig.LoggingEnabled = config.Hub.LoggingEnabled;
+            LogConfig.LoggingFolder = config.Hub.LoggingFolder;
+
+            PokeTradeBotSWSH.SeedChecker = new Z3SeedSearchHandler<PK8>();
+            BotContainer.RunBots(config);
+        }
+        catch (Exception)
+        {
+            Console.WriteLine("Unable to start bots with saved config file. Please copy your config from the WinForms project or delete it and reconfigure.");
+            Console.ReadKey();
+        }
+    }
+
+    private static void ExitNoConfig()
+    {
+        var bot = new PokeBotState { Connection = new SwitchConnectionConfig { IP = "192.168.0.1", Port = 6000 }, InitialRoutine = PokeRoutineType.FlexTrade };
+        var cfg = new ProgramConfig { Bots = [bot] };
+        var created = JsonSerializer.Serialize(cfg, ProgramConfigContext.Default.ProgramConfig);
+        File.WriteAllText(ConfigPath, created);
+        Console.WriteLine("Created new config file since none was found in the program's path. Please configure it and restart the program.");
+        Console.WriteLine("It is suggested to configure this config file using the GUI project if possible, as it will help you assign values correctly.");
+        Console.WriteLine("Press any key to exit.");
+        Console.ReadKey();
+    }
+}
+
+public static class BotContainer
+{
+    public static void RunBots(ProgramConfig prog)
+    {
+        var env = GetRunner(prog);
+        foreach (var bot in prog.Bots)
+        {
+            bot.Initialize();
+            if (!AddBot(env, bot, prog.Mode))
+                Console.WriteLine($"Failed to add bot: {bot}");
+        }
+
+        LogUtil.Forwarders.Add(((msg, ident) => Console.WriteLine($"{ident}: {msg}"), nameof(Program)));
+        env.StartAll();
+        Console.WriteLine($"Started all bots (Count: {prog.Bots.Length}).");
+        WaitForExit();
+        env.StopAll();
+    }
+
+    private static void WaitForExit()
+    {
+        if (Environment.UserInteractive)
+        {
+            Console.WriteLine("Press any key to stop execution and quit. Feel free to minimize this window!");
+            Console.ReadKey();
+            return;
+        }
+
+        Console.WriteLine("Running in non-interactive mode. Waiting for exit signal.");
+
+        var cancel = false;
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        {
+            Console.WriteLine("Process exit detected. Stopping all bots.");
+            cancel = true;
+        };
+
+        while (!cancel)
+            System.Threading.Thread.Sleep(1_000);
+    }
+
+    private static IPokeBotRunner GetRunner(ProgramConfig prog) => prog.Mode switch
+    {
+        ProgramMode.SWSH => new PokeBotRunnerImpl<PK8>(prog.Hub, new BotFactory8SWSH()),
+        ProgramMode.BDSP => new PokeBotRunnerImpl<PB8>(prog.Hub, new BotFactory8BS()),
+        ProgramMode.LA => new PokeBotRunnerImpl<PA8>(prog.Hub, new BotFactory8LA()),
+        ProgramMode.SV => new PokeBotRunnerImpl<PK9>(prog.Hub, new BotFactory9SV()),
+        ProgramMode.ZA => new PokeBotRunnerImpl<PA9>(prog.Hub, new BotFactory9LZA()),
+        _ => throw new IndexOutOfRangeException("Unsupported mode."),
+    };
+
+    private static bool AddBot(IPokeBotRunner env, PokeBotState cfg, ProgramMode mode)
+    {
+        if (!cfg.IsValid())
+        {
+            Console.WriteLine($"{cfg}'s config is not valid.");
+            return false;
+        }
+
+        PokeRoutineExecutorBase newBot;
+        try
+        {
+            newBot = env.CreateBotFromConfig(cfg);
+        }
+        catch
+        {
+            Console.WriteLine($"Current Mode ({mode}) does not support this type of bot ({cfg.CurrentRoutineType}).");
+            return false;
+        }
+
+        try
+        {
+            env.Add(newBot);
+        }
+        catch (ArgumentException ex)
+        {
+            Console.WriteLine(ex.Message);
+            return false;
+        }
+
+        Console.WriteLine($"Added: {cfg}: {cfg.InitialRoutine}");
+        return true;
+    }
+}
