@@ -9,6 +9,11 @@ public sealed class BotFactory9LZA : BotFactory<PA9>
     {
         PokeRoutineType.EncounterDiancie => new EncounterBotDiancieLZA(cfg, hub),
         PokeRoutineType.EncounterFloette => new EncounterBotFloetteLZA(cfg, hub),
+        PokeRoutineType.EncounterVolcanion => new EncounterBotVolcanionLZA(cfg, hub),
+        PokeRoutineType.EncounterGenesect => new EncounterBotGenesectLZA(cfg, hub),
+        PokeRoutineType.EncounterHoopa => new EncounterBotHoopaLZA(cfg, hub),
+        PokeRoutineType.EncounterMagearna => new EncounterBotMagearnaLZA(cfg, hub),
+        PokeRoutineType.EncounterMarshadow => new EncounterBotMarshadowLZA(cfg, hub),
         PokeRoutineType.EncounterOverworld => new EncounterBotOverworldScannerLZA(cfg, hub),
         PokeRoutineType.FossilBot => new EncounterBotFossilLZA(cfg, hub),
 
@@ -21,6 +26,11 @@ public sealed class BotFactory9LZA : BotFactory<PA9>
     {
         PokeRoutineType.EncounterDiancie => true,
         PokeRoutineType.EncounterFloette => true,
+        PokeRoutineType.EncounterVolcanion => true,
+        PokeRoutineType.EncounterGenesect => true,
+        PokeRoutineType.EncounterHoopa => true,
+        PokeRoutineType.EncounterMagearna => true,
+        PokeRoutineType.EncounterMarshadow => true,
         PokeRoutineType.EncounterOverworld => true,
         PokeRoutineType.FossilBot => true,
 

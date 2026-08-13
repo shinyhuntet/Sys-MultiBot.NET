@@ -87,6 +87,21 @@ public enum PokeRoutineType
     /// <summary> Retrieves Diancie until the criteria is satisfied.  </summary>
     EncounterDiancie = 7_007,
 
+    /// <summary> Retrieves Volcanion until the criteria is satisfied.  </summary>
+    EncounterVolcanion = 7_008,
+
+    /// <summary> Retrieves Genesect until the criteria is satisfied.  </summary>
+    EncounterGenesect = 7_009,
+
+    /// <summary> Retrieves Magearna until the criteria is satisfied.  </summary>
+    EncounterMagearna = 7_010,
+
+    /// <summary> Retrieves Marshadow until the criteria is satisfied.  </summary>
+    EncounterMarshadow = 7_011,
+
+    /// <summary> Retrieves Hoopa until the criteria is satisfied.  </summary>
+    EncounterHoopa = 7_012,
+
     /// <summary> Keeps running circles until all party members have the Partner mark.  </summary>
     PartnerMark = 7_050,
 
